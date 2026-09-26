@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useMinuteClock } from "@/hooks/useClock";
-import { useCarrierNames } from "@/hooks/usePublicConfig";
+import { useServerCarrierNames, useRawServer } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import {
   getPingHistorySnapshot,
@@ -21,10 +21,12 @@ import {
   carrierTaskName,
   inferIntervalSeconds,
 } from "@/services/cfsm/mappers";
+import { resolveVisibleCarrierTasks } from "@/services/cfsm/probes";
 import { CARRIER_KEYS, CARRIER_LOSS_KEYS } from "@/types/cfsm";
 import type {
   CarrierNames,
   CarrierPingSnapshot,
+  CfsmServer,
   HomepagePingLine,
   PingOverviewBucket,
   PingOverviewItem,
@@ -342,7 +344,9 @@ export function useNodePingOverviewLines(
 ): HomepagePingLine[] {
   const samples = usePingSamples(uuid, enabled);
   const taskIds = useNodeMultiPingTaskIds(uuid);
-  const carrierNames = useCarrierNames();
+  // 线路名用这台机器的：ProbeDeck 的扩展槽（node_5..node_20）名字是逐机下发的
+  // （`probes[].name` / `node_N_name`），站点级 config 里根本没有这几条。
+  const carrierNames = useServerCarrierNames(uuid);
   return useMemo(
     () =>
       enabled
@@ -390,17 +394,35 @@ export function useNodeMultiPingTaskIds(uuid: string): readonly number[] {
 
 const EMPTY_TASK_IDS: readonly number[] = [];
 const availableTaskIdsCache = new WeakMap<object, readonly number[]>();
+/** ProbeDeck 口径的结果按服务器对象缓存：同一份对象返回同一个数组。 */
+const serverTaskIdsCache = new WeakMap<object, readonly number[]>();
 
 /**
- * 这台节点有数据的线路（缓冲区里至少一个样本有值，探测失败的负值也算），按线路表顺序。
+ * 这台节点能选的线路，按线路表顺序。
  *
- * 卡片线路切换菜单只列这些：后端对没配探测目标的槽位下发 `false`（→ null），那几条对这台节点
- * 永远是空的，换过去只会是一行「无样本」——「没数据就不展示」是站长定的口径。
- * 按样本数组缓存，同一份缓冲区返回同一个数组。
+ * - **ProbeDeck**（服务器对象带 `probes[]`）：扩展槽（`node_5..node_20`）只认 `probes[]`
+ *   —— 配了就列，哪怕探针还没上报；前 8 槽有值就收，`probes[]` 里列了也算。
+ *   规则与判定理由见 `resolveVisibleCarrierTasks`。
+ * - **老后端**（没有 `probes` 字段）：退回「缓冲区里至少一个样本有值」的旧口径，
+ *   行为与升级前完全一致。
+ *
+ * 卡片线路切换菜单只列这些：没配探测目标的槽位换过去只会是一行「无样本」——
+ * 「没数据就不展示」是站长定的口径。按样本数组 / 服务器对象缓存，同一份输入返回同一个数组。
  */
 export function listAvailablePingTaskIds(
   samples: readonly PingLiveSample[],
+  server?: CfsmServer | null,
 ): readonly number[] {
+  if (server) {
+    const cached = serverTaskIdsCache.get(server);
+    if (cached) return cached;
+    const visible = resolveVisibleCarrierTasks(server);
+    if (visible) {
+      const taskIds = visible.map((task) => task.id);
+      serverTaskIdsCache.set(server, taskIds);
+      return taskIds;
+    }
+  }
   if (samples.length === 0) return EMPTY_TASK_IDS;
   const cached = availableTaskIdsCache.get(samples);
   if (cached) return cached;
@@ -412,7 +434,9 @@ export function listAvailablePingTaskIds(
 }
 
 export function useAvailablePingTaskIds(uuid: string, enabled = true): readonly number[] {
-  return listAvailablePingTaskIds(usePingSamples(uuid, enabled));
+  const samples = usePingSamples(uuid, enabled);
+  const server = useRawServer(uuid);
+  return listAvailablePingTaskIds(samples, enabled ? server : null);
 }
 
 /**

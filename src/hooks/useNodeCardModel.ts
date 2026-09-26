@@ -13,7 +13,9 @@ import {
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import { carrierTaskName } from "@/services/cfsm/mappers";
-import { useCarrierNames, useLatencyWindowMs } from "@/hooks/usePublicConfig";
+import { useLatencyWindowMs } from "@/hooks/usePublicConfig";
+import { useServerCarrierNames } from "@/hooks/useNode";
+import { useVisitorFieldVisibility } from "@/hooks/useVisitorFieldVisibility";
 import type { HomepagePingDisplayLine, HomepagePingLine } from "@/types/cfsm";
 import { formatRenewalPrice } from "@/utils/billing";
 import { getExpireTextColor } from "@/utils/expireStatus";
@@ -41,6 +43,18 @@ interface NodeCardModelOptions {
   pingBucketCount?: number;
   includeMultiPing?: boolean;
 }
+
+/**
+ * 流量对访客不可见时的展示模型：全部显示「—」，配额条不点亮（fraction 0）。
+ * 由 `useVisitorFieldVisibility` 的 `showTraffic` 决定用不用，见下面 traffic 的构造。
+ */
+const UNAVAILABLE_TRAFFIC: TrafficDisplay = {
+  fraction: 0,
+  color: "var(--text-tertiary)",
+  remainingLabel: "—",
+  detail: "—",
+  typeLabel: "未公开",
+};
 
 export function shouldRenderHomepagePingBars(
   hasRealHomepagePingBinding: boolean,
@@ -119,7 +133,9 @@ export function useNodeCardModel(
   // 后端下发 latency_window.hours 时用它定柱子跨度；缺席就传 undefined，回退到
   // buildPingBuckets 的「从数据自推跨度」。四种视图都走这里，口径统一。
   const latencyWindowMs = useLatencyWindowMs();
-  const carrierNames = useCarrierNames();
+  const carrierNames = useServerCarrierNames(uuid);
+  // 流量对访客不可见时（ProbeDeck 的 `sysConfig.show_tf` 关掉）用不可用状态，不伪造「∞」。
+  const { showTraffic } = useVisitorFieldVisibility();
   const pingBuckets = usePingBuckets(
     ping,
     pingBucketCount,
@@ -261,13 +277,17 @@ export function useNodeCardModel(
     const trafficColor = trafficUsage.unlimited
       ? "var(--status-success)"
       : trafficUsageColor(trafficUsage.fraction);
-    const traffic: TrafficDisplay = {
-      fraction: trafficUsage.fraction,
-      color: trafficColor,
-      remainingLabel: trafficUsage.unlimited ? "∞" : formatBytes(trafficUsage.remaining),
-      detail: `${trafficUsedLabel} / ${trafficLimitLabel}`,
-      typeLabel: trafficTypeLabel(meta.traffic_limit_type),
-    };
+    // 访客 + 站长关掉了「向访客公开流量」：面板把 traffic_limit 整个剥掉了，照旧按
+    // 「缺失 = 不限量」渲染会凭空造出一个「∞」。改成不可用状态（「—」），配额条也不点亮。
+    const traffic: TrafficDisplay = showTraffic
+      ? {
+          fraction: trafficUsage.fraction,
+          color: trafficColor,
+          remainingLabel: trafficUsage.unlimited ? "∞" : formatBytes(trafficUsage.remaining),
+          detail: `${trafficUsedLabel} / ${trafficLimitLabel}`,
+          typeLabel: trafficTypeLabel(meta.traffic_limit_type),
+        }
+      : UNAVAILABLE_TRAFFIC;
 
     return {
       node: { ...meta, ...metrics },
@@ -293,6 +313,7 @@ export function useNodeCardModel(
     pingModel,
     ping,
     pingBuckets,
+    showTraffic,
     trafficTrend,
   ]);
 }

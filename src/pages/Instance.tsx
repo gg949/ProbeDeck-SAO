@@ -12,6 +12,7 @@ import {
 } from "@/components/instance/chartShared";
 import { useAuth } from "@/hooks/useAuth";
 import { useNodeMeta, useNodeStoreStatus, useRealtimeFocus } from "@/hooks/useNode";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { ANONYMOUS_MAX_HISTORY_HOURS } from "@/services/api";
 
@@ -20,8 +21,8 @@ const DEFAULT_PING_HOURS = 1;
 // 负载图默认停在「1 小时」：默认发起的就是 hours=1 这一档，选中的按钮也应是「1 小时」，
 // 别默认到「实时」却偷偷请求 hours=1（实时档真正的请求窗口见 LoadChart 的 REALTIME_HISTORY_HOURS）。
 const DEFAULT_LOAD_HOURS = 1;
-/** `/api/history/all` 的 hours 上限。 */
-const MAX_HISTORY_HOURS = 168;
+/** `/api/history/all` 的 hours 上限。ProbeDeck 把原版的 168 小时（7 天）拉到 720 小时（30 天）；老后端收到 336 / 720 会回 400，所以档位表按 maxHours 过滤，选了也用不上。 */
+const MAX_HISTORY_HOURS = 720;
 type TimeRangeOption = ReturnType<typeof buildLoadTimeRangeOptions>[number];
 
 function RangeSelector({
@@ -53,6 +54,7 @@ function RangeSelector({
 export function Instance() {
   const { uuid } = useParams<{ uuid: string }>();
   const { data: me } = useAuth();
+  const { data: publicConfig } = usePublicConfig();
   const themeSettings = useThemeSettings();
   const meta = useNodeMeta(uuid ?? "");
   const storeStatus = useNodeStoreStatus(Boolean(uuid));
@@ -63,10 +65,11 @@ export function Instance() {
   const [pingHours, setPingHours] = useState(DEFAULT_PING_HOURS);
   const chartControlsRef = useRef<HTMLDivElement | null>(null);
 
-  // 后端最长支持 7 天；未登录访客查询超过 24 小时会被拒绝，所以直接不显示更长的档位。
+  // 登录站长按后端上限（ProbeDeck 720 小时 / 老后端 168）；访客按站点配置的公开上限
+  // （`public_history_hours`，ProbeDeck 默认 720），老后端不下发这个字段时退回原版写死的 24。
   const maxHistoryHours = me?.logged_in
     ? MAX_HISTORY_HOURS
-    : ANONYMOUS_MAX_HISTORY_HOURS;
+    : (publicConfig?.publicHistoryHours ?? ANONYMOUS_MAX_HISTORY_HOURS);
 
   const loadRanges = useMemo(
     () => buildLoadTimeRangeOptions(maxHistoryHours),

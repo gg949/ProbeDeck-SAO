@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
+import { useVisitorFieldVisibility } from "@/hooks/useVisitorFieldVisibility";
 
 const PRICE_VISIBILITY_OVERRIDE_KEY = "komaritheme:price-visibility-override";
 
@@ -67,13 +68,16 @@ function getSnapshot(): PriceVisibilityOverride {
 export function usePriceVisibility() {
   const { data: me } = useAuth();
   const themeSettings = useThemeSettings();
+  // 站点开关（ProbeDeck 的 `sysConfig.show_price`）：关掉时访客拿到的价格字段被服务端剥离，
+  // 再按主题设置渲染只会显示「免费」这种假值 —— 两项都要满足才认为价格可公开。
+  const { showPrice: showPriceForGuests } = useVisitorFieldVisibility();
   const override = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const loggedIn = Boolean(me?.logged_in);
 
   const isPriceVisible = resolvePriceVisibility(
     loggedIn,
-    themeSettings.showPriceForGuests,
+    themeSettings.showPriceForGuests && showPriceForGuests,
     override,
   );
 

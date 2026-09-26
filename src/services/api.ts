@@ -30,6 +30,7 @@ import {
   historyRowsToPingRecords,
   historyRowsToPingSamples,
   inferIntervalSeconds,
+  setOnlineThresholdMs,
   toNodeInfo,
 } from "@/services/cfsm/mappers";
 import { seedMeasuredHistory } from "@/services/pingLiveStore";
@@ -37,10 +38,10 @@ import { resolvePreferredAppearance } from "@/utils/themeSettings";
 
 export { ApiRequestError, DatabaseUpgradeRequiredError } from "@/services/cfsm/http";
 
-/** 后端支持的历史查询时长档位（小时）。 */
-export const HISTORY_HOURS_OPTIONS = [0.167, 0.5, 1, 6, 12, 24, 48, 96, 168] as const;
+/** 后端支持的历史查询时长档位（小时）。ProbeDeck 把上限从原版的 168 小时（7 天）拉到 720 小时（30 天），多出 336 / 720 两档；老后端收到这两档会回 400，所以只有配置里的上限放行时才展示（见 Instance 的 maxHistoryHours）。 */
+export const HISTORY_HOURS_OPTIONS = [0.167, 0.5, 1, 6, 12, 24, 48, 96, 168, 336, 720] as const;
 
-/** 未登录用户查询超过 24 小时会被拒绝。 */
+/** 老后端（CF-Server-Monitor 原版）未登录用户的硬上限；ProbeDeck 会下发站点自己的 `public_history_hours`，取到就以它为准。 */
 export const ANONYMOUS_MAX_HISTORY_HOURS = 24;
 
 const degradeWarned = new Set<string>();
@@ -155,6 +156,8 @@ export async function saveThemeOptions(
  */
 export async function getPublic(options?: RequestOptions): Promise<PublicConfig> {
   const config = await getSiteConfig(options);
+  // 在线判定阈值随配置走：后端聚合统计用的就是这个站点设置（老后端不下发时保持默认 300 秒）。
+  setOnlineThresholdMs(config.online_threshold_seconds * 1000);
   return {
     sitename: config.site_title,
     description: "",
@@ -168,6 +171,8 @@ export async function getPublic(options?: RequestOptions): Promise<PublicConfig>
     theme_settings: resolveThemeOptions(config.theme_options),
     latencyWindow: config.latency_window,
     frontendWsTimeoutMinutes: config.frontend_ws_timeout_minutes,
+    publicHistoryHours: config.public_history_hours,
+    onlineThresholdMs: config.online_threshold_seconds * 1000,
     preferredAppearance: resolvePreferredAppearance(config.preferred_theme),
     // 线路名可由站长在后端改；老后端不下发这几个字段，逐条回退到主题默认名。
     // 后四条（2.8.5 Beta4 新增）的键名风格和前四条不一样，是 node_N_name。

@@ -14,7 +14,7 @@ import {
   useAvailablePingTaskIds,
   useNodePingLineOverrides,
 } from "@/hooks/usePingOverview";
-import { useCarrierNames } from "@/hooks/usePublicConfig";
+import { useServerCarrierNames } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { CARRIER_TASKS, carrierTaskName } from "@/services/cfsm/mappers";
 import { setPingLineOverrides } from "@/services/pingLineOverrideStore";
@@ -105,7 +105,7 @@ function PingLineMenu({
   const { homepageMultiPingTaskIds, homepagePingLineOverrides } = useThemeSettings();
   const overrides = useNodePingLineOverrides(uuid);
   const available = useAvailablePingTaskIds(uuid);
-  const carrierNames = useCarrierNames();
+  const carrierNames = useServerCarrierNames(uuid);
   // 这台节点的「默认」= 站点线路表 + 站长存到后端的逐节点换线；本机换的行相对它记，「恢复默认」也回到它。
   const nodeDefault = resolveNodePingLineTaskIds(
     homepageMultiPingTaskIds,

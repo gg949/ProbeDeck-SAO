@@ -1,11 +1,11 @@
 export type HomepagePingTaskBindings = Record<string, string[]>;
 
 /**
- * 多线路模式最多同时显示几条线路。后端 2.8.5 Beta4 起是八条探测线路（`CARRIER_TASKS`），这个数跟着它走
- * —— 以后后端加线路，`pingTasks.test.ts` 里那条「和 CARRIER_TASKS 对齐」的断言会先失败，
- * 提醒把这里一起抬上去（util 层不直接 import services，免得把适配层拖进纯函数的依赖里）。
+ * 多线路模式最多同时显示几条线路。ProbeDeck 把探测线路从八条扩到 24 条（`CARRIER_TASKS`），
+ * 这个数跟着它走 —— 以后后端加线路，`pingTasks.test.ts` 里那条「和 CARRIER_TASKS 对齐」的断言
+ * 会先失败，提醒把这里一起抬上去（util 层不直接 import services，免得把适配层拖进纯函数的依赖里）。
  */
-export const HOMEPAGE_MULTI_PING_MAX_COUNT = 8;
+export const HOMEPAGE_MULTI_PING_MAX_COUNT = 24;
 
 /**
  * 至少选几条才算配置好。**1 条也是合法配置**（v1.2.14 之前写死必须三条）：站长可能只关心
