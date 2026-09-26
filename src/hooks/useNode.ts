@@ -33,7 +33,7 @@ import type {
 import { useAuth } from "@/hooks/useAuth";
 import { useCarrierNames } from "@/hooks/usePublicConfig";
 import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
-import { resolveServerCarrierNames } from "@/services/cfsm/probes";
+import { stableServerCarrierNames } from "@/services/cfsm/probes";
 
 const noopUnsubscribe = () => undefined;
 
@@ -94,8 +94,10 @@ export function useRawServer(uuid: string): CfsmServer | undefined {
 export function useServerCarrierNames(uuid: string): CarrierNames {
   const siteNames = useCarrierNames();
   const server = useRawServer(uuid);
+  // 服务器对象每秒都会被 WS 增量合并换引用；名字本身几乎不变，走按内容稳定的版本，
+  // 别让下游 memo（tasks / 图表 options…）跟着每秒重算 —— 详情页图表会被整个重建。
   return useMemo(
-    () => resolveServerCarrierNames(server, siteNames),
+    () => stableServerCarrierNames(server, siteNames),
     [server, siteNames],
   );
 }

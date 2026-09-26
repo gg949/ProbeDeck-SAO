@@ -1,4 +1,5 @@
 import { CARRIER_TASKS, DEFAULT_CARRIER_NAMES, type CarrierTask } from "./mappers";
+import { CARRIER_KEYS } from "@/types/cfsm";
 import type { CarrierKey, CarrierNames, CfsmServer } from "@/types/cfsm";
 
 /**
@@ -111,4 +112,59 @@ export function resolveServerCarrierNames(
     }
   }
   return resolved ?? siteNames;
+}
+
+/**
+ * 线路名表的稳定键：内容相同 → 键相同（默认名走同一个常量，键里只写个短标记）。
+ * 用于判断「名字有没有真变」—— 服务器对象每秒都会被 WS 增量合并换引用（见下），
+ * 光按对象引用比较会把没变的名字也当成新值。
+ */
+export function carrierNamesKey(names: CarrierNames): string {
+  return names === DEFAULT_CARRIER_NAMES
+    ? "default"
+    : CARRIER_KEYS.map((key) => names[key]).join("|");
+}
+
+/**
+ * 与 {@link resolveServerCarrierNames} 同口径，但**按内容稳定引用**：名字没变时返回同一个对象。
+ *
+ * 服务器对象每次 WS 增量合并都会换引用（ProbeDeck 每秒一帧），直接把它放进下游 `useMemo`
+ * 的依赖里，会让 `tasks` → `chartBundle` → `options` 整条链每秒重建 —— 详情页的
+ * uplot-react 遇到 `options` 引用变化会把整个图表销毁重建，表现为「延迟图每秒刷新一次」。
+ * 按内容键缓存后，名字不变就是同一个引用，图表只在数据真的变化时才动。
+ */
+const serverCarrierNamesCache = new Map<string, CarrierNames>();
+
+export function stableServerCarrierNames(
+  server: CfsmServer | null | undefined,
+  siteNames: CarrierNames = DEFAULT_CARRIER_NAMES,
+): CarrierNames {
+  const resolved = resolveServerCarrierNames(server, siteNames);
+  const key = carrierNamesKey(resolved);
+  const cached = serverCarrierNamesCache.get(key);
+  if (cached) return cached;
+  if (serverCarrierNamesCache.size > 256) serverCarrierNamesCache.clear();
+  serverCarrierNamesCache.set(key, resolved);
+  return resolved;
+}
+
+/**
+ * 与 {@link resolveVisibleCarrierTasks} 同口径，但**按内容稳定引用**：可见集合没变时
+ * 返回同一个 Set（原因同 {@link stableServerCarrierNames}）。返回 `null` = 后端没有
+ * `probes` 字段（老后端），调用方不做过滤。
+ */
+const visibleTaskIdSetCache = new Map<string, ReadonlySet<number>>();
+
+export function stableVisibleTaskIdSet(
+  server: CfsmServer | null | undefined,
+): ReadonlySet<number> | null {
+  const visible = resolveVisibleCarrierTasks(server);
+  if (!visible) return null;
+  const key = visible.map((task) => task.id).join(",");
+  const cached = visibleTaskIdSetCache.get(key);
+  if (cached) return cached;
+  if (visibleTaskIdSetCache.size > 256) visibleTaskIdSetCache.clear();
+  const ids = new Set<number>(visible.map((task) => task.id));
+  visibleTaskIdSetCache.set(key, ids);
+  return ids;
 }

@@ -21,8 +21,8 @@ import {
   carrierTaskName,
   inferIntervalSeconds,
 } from "@/services/cfsm/mappers";
-import { resolveVisibleCarrierTasks } from "@/services/cfsm/probes";
-import { CARRIER_KEYS, CARRIER_LOSS_KEYS } from "@/types/cfsm";
+import { carrierNamesKey, resolveVisibleCarrierTasks } from "@/services/cfsm/probes";
+import { CARRIER_LOSS_KEYS } from "@/types/cfsm";
 import type {
   CarrierNames,
   CarrierPingSnapshot,
@@ -259,16 +259,6 @@ function getCachedLines(
   return lines;
 }
 
-/**
- * 默认名走同一个常量，键里只写个短标记，免得每次渲染都拼一遍名字。
- * 改过名时按线路表逐条拼、不手写字段：手写时只拼了前四条，站长只改 Node 1~4 的名字，缓存就一直顶回旧名字。
- */
-function carrierNamesKey(names: CarrierNames): string {
-  return names === DEFAULT_CARRIER_NAMES
-    ? "default"
-    : CARRIER_KEYS.map((key) => names[key]).join("|");
-}
-
 function usePingSamples(uuid: string, enabled: boolean): readonly PingLiveSample[] {
   const subscribe = useCallback(
     (callback: () => void) =>
@@ -394,8 +384,11 @@ export function useNodeMultiPingTaskIds(uuid: string): readonly number[] {
 
 const EMPTY_TASK_IDS: readonly number[] = [];
 const availableTaskIdsCache = new WeakMap<object, readonly number[]>();
-/** ProbeDeck 口径的结果按服务器对象缓存：同一份对象返回同一个数组。 */
-const serverTaskIdsCache = new WeakMap<object, readonly number[]>();
+/**
+ * ProbeDeck 口径的结果按「可见线路 id」内容键缓存：服务器对象每秒都会被 WS 增量合并
+ * 换引用，按对象缓存会每秒落空、下游 memo 跟着每秒重算（详情页图表会被 uplot-react 重建）。
+ */
+const serverTaskIdsCache = new Map<string, readonly number[]>();
 
 /**
  * 这台节点能选的线路，按线路表顺序。
@@ -407,19 +400,21 @@ const serverTaskIdsCache = new WeakMap<object, readonly number[]>();
  *   行为与升级前完全一致。
  *
  * 卡片线路切换菜单只列这些：没配探测目标的槽位换过去只会是一行「无样本」——
- * 「没数据就不展示」是站长定的口径。按样本数组 / 服务器对象缓存，同一份输入返回同一个数组。
+ * 「没数据就不展示」是站长定的口径。按样本数组 / 可见集合内容键缓存，同一份输入返回同一个数组。
  */
 export function listAvailablePingTaskIds(
   samples: readonly PingLiveSample[],
   server?: CfsmServer | null,
 ): readonly number[] {
   if (server) {
-    const cached = serverTaskIdsCache.get(server);
-    if (cached) return cached;
     const visible = resolveVisibleCarrierTasks(server);
     if (visible) {
+      const key = visible.map((task) => task.id).join(",");
+      const cached = serverTaskIdsCache.get(key);
+      if (cached) return cached;
       const taskIds = visible.map((task) => task.id);
-      serverTaskIdsCache.set(server, taskIds);
+      if (serverTaskIdsCache.size > 256) serverTaskIdsCache.clear();
+      serverTaskIdsCache.set(key, taskIds);
       return taskIds;
     }
   }

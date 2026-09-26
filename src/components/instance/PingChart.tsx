@@ -5,7 +5,7 @@ import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { usePingRecords } from "@/hooks/useRecords";
 import { useRawServer, useServerCarrierNames } from "@/hooks/useNode";
 import { carrierTaskName } from "@/services/cfsm/mappers";
-import { resolveVisibleCarrierTasks } from "@/services/cfsm/probes";
+import { stableVisibleTaskIdSet } from "@/services/cfsm/probes";
 import { InstancePanel, InstanceChartLoading } from "./InstancePanel";
 import {
   buildChartTooltipHooks,
@@ -157,10 +157,9 @@ export function PingChart({
   // 可见性也按这台机器判：扩展槽只认 `probes[]` —— 槽位删掉后历史数值还会残留到探针下次上报，
   // 光按「有记录」画会留下一条删不掉的线。老后端没有 probes 字段时不做过滤，行为同升级前。
   const server = useRawServer(uuid);
-  const serverVisibleTaskIds = useMemo(() => {
-    const visible = resolveVisibleCarrierTasks(server);
-    return visible ? new Set<number>(visible.map((task) => task.id)) : null;
-  }, [server]);
+  // 集合按内容稳定（服务器对象每秒换引用，集合本身几乎不变）：引用一变，
+  // tasks → chartBundle → options 全链每秒重建，uplot-react 会把整个图表销毁重建。
+  const serverVisibleTaskIds = useMemo(() => stableVisibleTaskIdSet(server), [server]);
   // API 顺序与后台任务权重一致，响应本身不一定包含可重排的权重。
   const tasks = useMemo(
     () =>

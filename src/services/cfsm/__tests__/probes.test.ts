@@ -6,6 +6,8 @@ import {
   resolveVisibleCarrierTasks,
   serverHasCarrierValue,
   serverProbeIds,
+  stableServerCarrierNames,
+  stableVisibleTaskIdSet,
 } from "@/services/cfsm/probes";
 import { DEFAULT_CARRIER_NAMES, resolveCarrierNames } from "@/services/cfsm/mappers";
 import type { CfsmServer } from "@/types/cfsm";
@@ -119,5 +121,36 @@ describe("resolveServerCarrierNames", () => {
     expect(names.node_1).toBe("逐机一号");
     expect(names.ct).toBe("CT");
     expect(names.node_20).toBe(DEFAULT_CARRIER_NAMES.node_20);
+  });
+});
+
+describe("stableServerCarrierNames", () => {
+  it("keeps the same reference while the names do not change", () => {
+    const first = stableServerCarrierNames(server({ custom_ct_name: "电信甲" }));
+    const second = stableServerCarrierNames(server({ custom_ct_name: "电信甲" }));
+    expect(second).toBe(first);
+    expect(second.ct).toBe("电信甲");
+  });
+
+  it("returns a new reference once a name changes", () => {
+    const before = stableServerCarrierNames(server({ custom_ct_name: "电信甲" }));
+    const after = stableServerCarrierNames(server({ custom_ct_name: "电信乙" }));
+    expect(after).not.toBe(before);
+    expect(after.ct).toBe("电信乙");
+  });
+});
+
+describe("stableVisibleTaskIdSet", () => {
+  it("keeps the same Set while the visible slots do not change", () => {
+    const first = stableVisibleTaskIdSet(server({ probes: [{ id: "ct", name: "电信" }] }));
+    const second = stableVisibleTaskIdSet(server({ probes: [{ id: "ct", name: "电信" }] }));
+    expect(second).toBe(first);
+    const expected = resolveVisibleCarrierTasks(server({ probes: [{ id: "ct", name: "电信" }] }));
+    expect([...(second ?? [])]).toEqual(expected?.map((task) => task.id) ?? []);
+  });
+
+  it("is null when the backend does not send probes at all", () => {
+    expect(stableVisibleTaskIdSet(server())).toBeNull();
+    expect(stableVisibleTaskIdSet(null)).toBeNull();
   });
 });
