@@ -3,8 +3,9 @@ import UplotReact from "uplot-react";
 import type uPlot from "uplot";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { usePingRecords } from "@/hooks/useRecords";
-import { useCarrierNames } from "@/hooks/usePublicConfig";
+import { useRawServer, useServerCarrierNames } from "@/hooks/useNode";
 import { carrierTaskName } from "@/services/cfsm/mappers";
+import { stableVisibleTaskIdSet } from "@/services/cfsm/probes";
 import { InstancePanel, InstanceChartLoading } from "./InstancePanel";
 import {
   buildChartTooltipHooks,
@@ -149,17 +150,26 @@ export function PingChart({
     time: "",
   });
   const isDark = resolvedAppearance === "dark";
-  // 线路名以 `/api/config` 的自定义名为准：历史查询是按 uuid+hours 缓存的，站长改名
-  // （或 config 晚于历史返回）不会让那份缓存重算，所以在这里按当前名字重新贴一遍。
-  const carrierNames = useCarrierNames();
+  // 线路名以这台机器的名字为准：ProbeDeck 的扩展槽（node_5..node_20）名字是逐机下发的
+  // （`probes[].name` / `node_N_name`），站点级 config 里只有前 8 槽。历史查询是按 uuid+hours
+  // 缓存的，站长改名（或名字晚于历史返回）不会让那份缓存重算，所以在这里按当前名字重新贴一遍。
+  const carrierNames = useServerCarrierNames(uuid);
+  // 可见性也按这台机器判：扩展槽只认 `probes[]` —— 槽位删掉后历史数值还会残留到探针下次上报，
+  // 光按「有记录」画会留下一条删不掉的线。老后端没有 probes 字段时不做过滤，行为同升级前。
+  const server = useRawServer(uuid);
+  // 集合按内容稳定（服务器对象每秒换引用，集合本身几乎不变）：引用一变，
+  // tasks → chartBundle → options 全链每秒重建，uplot-react 会把整个图表销毁重建。
+  const serverVisibleTaskIds = useMemo(() => stableVisibleTaskIdSet(server), [server]);
   // API 顺序与后台任务权重一致，响应本身不一定包含可重排的权重。
   const tasks = useMemo(
     () =>
-      (data?.tasks ?? []).map((task) => ({
-        ...task,
-        name: carrierTaskName(task.id, carrierNames),
-      })),
-    [carrierNames, data],
+      (data?.tasks ?? [])
+        .filter((task) => !serverVisibleTaskIds || serverVisibleTaskIds.has(task.id))
+        .map((task) => ({
+          ...task,
+          name: carrierTaskName(task.id, carrierNames),
+        })),
+    [carrierNames, data, serverVisibleTaskIds],
   );
   const taskLabels = useMemo(() => {
     const counts = new Map<string, number>();

@@ -7,6 +7,7 @@ import {
   getNodeMetaSnapshot,
   getNodeMetricsSnapshot,
   getNodeTrafficTrendSnapshot,
+  getRawServerSnapshot,
   getNodeOnlineSummariesSnapshot,
   subscribeHomeNodeSummaries,
   subscribeNodeOnlineSummaries,
@@ -21,9 +22,18 @@ import {
   type HomeNodeSummary,
   type NodeOnlineSummary,
 } from "@/services/wsStore";
-import type { NodeInfo, NodeMetrics, TrafficTrendSample } from "@/types/cfsm";
+import type {
+  CarrierNames,
+  CfsmServer,
+  NodeInfo,
+  NodeMetrics,
+  SysConfig,
+  TrafficTrendSample,
+} from "@/types/cfsm";
 import { useAuth } from "@/hooks/useAuth";
+import { useCarrierNames } from "@/hooks/usePublicConfig";
 import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
+import { stableServerCarrierNames } from "@/services/cfsm/probes";
 
 const noopUnsubscribe = () => undefined;
 
@@ -52,6 +62,44 @@ function useNodeMetaSnapshot(uuid: string): NodeInfo | undefined {
   );
   const getSnapshot = useCallback(() => getNodeMetaSnapshot(uuid), [uuid]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * 原始服务器对象（后端原字段：`probes[]`、`node_N_name`、扁平 `ping_*` 等）。
+ *
+ * 同时订阅两个来源：全量刷新走 meta、WS 增量合并走 metrics —— 只订 meta 的话，
+ * 合并出来的新对象要等下一次全量刷新才能被看见（卡片上的延迟会慢一拍）。
+ */
+export function useRawServer(uuid: string): CfsmServer | undefined {
+  useEnsured();
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      const offMeta = subscribeToNodeMeta(uuid, callback);
+      const offMetrics = subscribeToNodeMetrics(uuid, callback);
+      return () => {
+        offMeta();
+        offMetrics();
+      };
+    },
+    [uuid],
+  );
+  const getSnapshot = useCallback(() => getRawServerSnapshot(uuid), [uuid]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * 这台机器的线路名：服务器对象上的逐机名字（`probes[].name` / `node_N_name`）优先，
+ * 缺席时回退到站点级名字（`/api/config`）。没有覆盖时返回站点级那份（引用稳定）。
+ */
+export function useServerCarrierNames(uuid: string): CarrierNames {
+  const siteNames = useCarrierNames();
+  const server = useRawServer(uuid);
+  // 服务器对象每秒都会被 WS 增量合并换引用；名字本身几乎不变，走按内容稳定的版本，
+  // 别让下游 memo（tasks / 图表 options…）跟着每秒重算 —— 详情页图表会被整个重建。
+  return useMemo(
+    () => stableServerCarrierNames(server, siteNames),
+    [server, siteNames],
+  );
 }
 
 export function useNodeMetrics(uuid: string, enabled = true): NodeMetrics | undefined {
@@ -152,6 +200,16 @@ const EMPTY_STORE_STATUS = {
 export function useShowThreeNetDetails(): boolean {
   useEnsured();
   const getSnapshot = useCallback(() => getSysConfigSnapshot().show_three_net_details, []);
+  return useSyncExternalStore(subscribeSysConfig, getSnapshot, getSnapshot);
+}
+
+/**
+ * 后端 `/api/servers` 下发的站点开关（`show_price` / `show_expire` / `show_tf` 等）。
+ * ProbeDeck 用它决定「向访客公开哪些字段」，见 `useVisitorFieldVisibility`。
+ */
+export function useSysConfig(): SysConfig {
+  useEnsured();
+  const getSnapshot = useCallback(() => getSysConfigSnapshot(), []);
   return useSyncExternalStore(subscribeSysConfig, getSnapshot, getSnapshot);
 }
 

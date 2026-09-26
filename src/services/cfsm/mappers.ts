@@ -23,8 +23,25 @@ import {
 const MIB = 1024 * 1024;
 const GIB = 1024 * 1024 * 1024;
 
-/** 与后端 `/api/servers` 聚合统计一致的在线判定阈值。 */
-export const ONLINE_THRESHOLD_MS = 300_000;
+/**
+ * 在线判定阈值（毫秒）。默认 5 分钟 = CF-Server-Monitor 原版写死的口径；ProbeDeck 的
+ * `/api/config` 会下发 `online_threshold_seconds`（默认 120、站长可改），由 api 层在解析配置时
+ * 调 {@link setOnlineThresholdMs} 覆盖 —— 后端聚合统计用的就是站点设置里那个值。
+ */
+export const DEFAULT_ONLINE_THRESHOLD_MS = 300_000;
+let onlineThresholdMs = DEFAULT_ONLINE_THRESHOLD_MS;
+
+export function getOnlineThresholdMs(): number {
+  return onlineThresholdMs;
+}
+
+/** 只认正的有限数；老后端不下发 / 下发 0 时保持默认，免得把全站判成掉线。 */
+export function setOnlineThresholdMs(value: unknown): void {
+  const parsed =
+    typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(parsed) || parsed <= 0) return;
+  onlineThresholdMs = parsed;
+}
 
 /**
  * 各条线路的默认显示名。站长可以在后端改名（`/api/config` 的 `custom_ct_name`、`node_1_name` 等，
@@ -43,6 +60,23 @@ export const DEFAULT_CARRIER_NAMES: CarrierNames = {
   node_2: "Node 2",
   node_3: "Node 3",
   node_4: "Node 4",
+  // ProbeDeck 把槽位扩到 24 个，后端默认名同样是 Node N（站长改名后由服务器对象逐机下发）。
+  node_5: "Node 5",
+  node_6: "Node 6",
+  node_7: "Node 7",
+  node_8: "Node 8",
+  node_9: "Node 9",
+  node_10: "Node 10",
+  node_11: "Node 11",
+  node_12: "Node 12",
+  node_13: "Node 13",
+  node_14: "Node 14",
+  node_15: "Node 15",
+  node_16: "Node 16",
+  node_17: "Node 17",
+  node_18: "Node 18",
+  node_19: "Node 19",
+  node_20: "Node 20",
 };
 
 /**
@@ -83,6 +117,22 @@ export const CARRIER_TASKS = [
   { id: 6, key: "node_2", name: DEFAULT_CARRIER_NAMES.node_2, field: "ping_node_2", lossField: "loss_node_2" },
   { id: 7, key: "node_3", name: DEFAULT_CARRIER_NAMES.node_3, field: "ping_node_3", lossField: "loss_node_3" },
   { id: 8, key: "node_4", name: DEFAULT_CARRIER_NAMES.node_4, field: "ping_node_4", lossField: "loss_node_4" },
+  { id: 9, key: "node_5", name: DEFAULT_CARRIER_NAMES.node_5, field: "ping_node_5", lossField: "loss_node_5" },
+  { id: 10, key: "node_6", name: DEFAULT_CARRIER_NAMES.node_6, field: "ping_node_6", lossField: "loss_node_6" },
+  { id: 11, key: "node_7", name: DEFAULT_CARRIER_NAMES.node_7, field: "ping_node_7", lossField: "loss_node_7" },
+  { id: 12, key: "node_8", name: DEFAULT_CARRIER_NAMES.node_8, field: "ping_node_8", lossField: "loss_node_8" },
+  { id: 13, key: "node_9", name: DEFAULT_CARRIER_NAMES.node_9, field: "ping_node_9", lossField: "loss_node_9" },
+  { id: 14, key: "node_10", name: DEFAULT_CARRIER_NAMES.node_10, field: "ping_node_10", lossField: "loss_node_10" },
+  { id: 15, key: "node_11", name: DEFAULT_CARRIER_NAMES.node_11, field: "ping_node_11", lossField: "loss_node_11" },
+  { id: 16, key: "node_12", name: DEFAULT_CARRIER_NAMES.node_12, field: "ping_node_12", lossField: "loss_node_12" },
+  { id: 17, key: "node_13", name: DEFAULT_CARRIER_NAMES.node_13, field: "ping_node_13", lossField: "loss_node_13" },
+  { id: 18, key: "node_14", name: DEFAULT_CARRIER_NAMES.node_14, field: "ping_node_14", lossField: "loss_node_14" },
+  { id: 19, key: "node_15", name: DEFAULT_CARRIER_NAMES.node_15, field: "ping_node_15", lossField: "loss_node_15" },
+  { id: 20, key: "node_16", name: DEFAULT_CARRIER_NAMES.node_16, field: "ping_node_16", lossField: "loss_node_16" },
+  { id: 21, key: "node_17", name: DEFAULT_CARRIER_NAMES.node_17, field: "ping_node_17", lossField: "loss_node_17" },
+  { id: 22, key: "node_18", name: DEFAULT_CARRIER_NAMES.node_18, field: "ping_node_18", lossField: "loss_node_18" },
+  { id: 23, key: "node_19", name: DEFAULT_CARRIER_NAMES.node_19, field: "ping_node_19", lossField: "loss_node_19" },
+  { id: 24, key: "node_20", name: DEFAULT_CARRIER_NAMES.node_20, field: "ping_node_20", lossField: "loss_node_20" },
 ] as const;
 
 export type CarrierTask = (typeof CARRIER_TASKS)[number];
@@ -126,6 +176,31 @@ function toNullableNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
   const parsed = toNumber(value, Number.NaN);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * ProbeDeck 把扩展槽（node_5..node_20）的数值同时塞进 `extra_probes` JSON 字符串
+ * （键名就是扁平列名：`{"ping_node_5":40,"loss_node_5":0}`），扁平列在历史行里也可能被裁剪。
+ * 这里在扁平列缺席（`undefined` / `null`）时用 JSON 里的值补上 —— 面板自己的 `mergeExtraPingLoss`
+ * 也是「扁平优先、JSON 兜底」这个口径。两边都有值时以扁平列为准，不覆盖。
+ */
+export function flattenExtraProbes<T extends Record<string, unknown>>(row: T): T {
+  const raw = row.extra_probes;
+  if (typeof raw !== "string" || raw.length < 2) return row;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return row;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return row;
+  let merged: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (row[key] !== undefined && row[key] !== null) continue;
+    merged ??= { ...row };
+    merged[key] = value;
+  }
+  return (merged ?? row) as T;
 }
 
 /**
@@ -294,7 +369,7 @@ export function parsePrice(value: unknown): number {
 export function isServerOnline(server: CfsmServer, now = Date.now()): boolean {
   if (typeof server.is_online === "boolean") return server.is_online;
   const lastUpdated = normalizeTimestamp(server.last_updated || server.timestamp);
-  return lastUpdated > 0 && now - lastUpdated < ONLINE_THRESHOLD_MS;
+  return lastUpdated > 0 && now - lastUpdated < getOnlineThresholdMs();
 }
 
 export function toNodeInfo(server: CfsmServer): NodeInfo {
@@ -337,7 +412,8 @@ export function toNodeInfo(server: CfsmServer): NodeInfo {
 }
 
 /** 按线路表逐条读列，加线路只改 CARRIER_TASKS，不用再来这里补字段。 */
-function carrierPingFrom(row: Record<string, unknown>): CarrierPingSnapshot {
+function carrierPingFrom(source: Record<string, unknown>): CarrierPingSnapshot {
+  const row = flattenExtraProbes(source);
   const ping = { ...EMPTY_CARRIER_PING };
   for (const task of CARRIER_TASKS) {
     const loss = toNullableNumber(row[task.lossField]);
@@ -375,7 +451,8 @@ export function parseLatencyWindow(server: CfsmServer): PingLiveSample[] {
     const loss = lossByTs.get(time);
     const ping = { ...EMPTY_CARRIER_PING };
     for (const key of CARRIER_KEYS) {
-      // 窗口点里的键和 CARRIER_KEYS 同名（ct/cu/cm/bd/node_1..4）；老后端没有的读成 null。
+      // 窗口点里的键和 CARRIER_KEYS 同名（ct/cu/cm/bd/node_1..4，ProbeDeck 起还有 node_5..node_20）；
+      // 没配探测目标的槽位读成 null。
       const lossValue = loss ? toNullableNumber(loss[key]) : null;
       // 超时那一格 ping 是 null、loss 是 100：要读成超时，见 probeLatency。
       ping[key] = probeLatency(point[key], lossValue);
@@ -610,7 +687,9 @@ export function historyRowToLoadRecord(row: HistoryRow, client: string): LoadRec
  */
 export function historyRowsToPingRecords(rows: HistoryRow[], client: string): PingRecord[] {
   const out: PingRecord[] = [];
-  for (const row of rows) {
+  for (const source of rows) {
+    // 扩展槽的数值可能只存在于 extra_probes JSON 里（见 flattenExtraProbes）。
+    const row = flattenExtraProbes(source as unknown as Record<string, unknown>);
     const time = normalizeTimestamp(row.timestamp);
     if (time <= 0) continue;
     for (const task of CARRIER_TASKS) {

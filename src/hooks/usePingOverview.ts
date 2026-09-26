@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useMinuteClock } from "@/hooks/useClock";
-import { useCarrierNames } from "@/hooks/usePublicConfig";
+import { useServerCarrierNames, useRawServer } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import {
   getPingHistorySnapshot,
@@ -21,10 +21,12 @@ import {
   carrierTaskName,
   inferIntervalSeconds,
 } from "@/services/cfsm/mappers";
-import { CARRIER_KEYS, CARRIER_LOSS_KEYS } from "@/types/cfsm";
+import { carrierNamesKey, resolveVisibleCarrierTasks } from "@/services/cfsm/probes";
+import { CARRIER_LOSS_KEYS } from "@/types/cfsm";
 import type {
   CarrierNames,
   CarrierPingSnapshot,
+  CfsmServer,
   HomepagePingLine,
   PingOverviewBucket,
   PingOverviewItem,
@@ -257,16 +259,6 @@ function getCachedLines(
   return lines;
 }
 
-/**
- * 默认名走同一个常量，键里只写个短标记，免得每次渲染都拼一遍名字。
- * 改过名时按线路表逐条拼、不手写字段：手写时只拼了前四条，站长只改 Node 1~4 的名字，缓存就一直顶回旧名字。
- */
-function carrierNamesKey(names: CarrierNames): string {
-  return names === DEFAULT_CARRIER_NAMES
-    ? "default"
-    : CARRIER_KEYS.map((key) => names[key]).join("|");
-}
-
 function usePingSamples(uuid: string, enabled: boolean): readonly PingLiveSample[] {
   const subscribe = useCallback(
     (callback: () => void) =>
@@ -342,7 +334,9 @@ export function useNodePingOverviewLines(
 ): HomepagePingLine[] {
   const samples = usePingSamples(uuid, enabled);
   const taskIds = useNodeMultiPingTaskIds(uuid);
-  const carrierNames = useCarrierNames();
+  // 线路名用这台机器的：ProbeDeck 的扩展槽（node_5..node_20）名字是逐机下发的
+  // （`probes[].name` / `node_N_name`），站点级 config 里根本没有这几条。
+  const carrierNames = useServerCarrierNames(uuid);
   return useMemo(
     () =>
       enabled
@@ -390,17 +384,40 @@ export function useNodeMultiPingTaskIds(uuid: string): readonly number[] {
 
 const EMPTY_TASK_IDS: readonly number[] = [];
 const availableTaskIdsCache = new WeakMap<object, readonly number[]>();
+/**
+ * ProbeDeck 口径的结果按「可见线路 id」内容键缓存：服务器对象每秒都会被 WS 增量合并
+ * 换引用，按对象缓存会每秒落空、下游 memo 跟着每秒重算（详情页图表会被 uplot-react 重建）。
+ */
+const serverTaskIdsCache = new Map<string, readonly number[]>();
 
 /**
- * 这台节点有数据的线路（缓冲区里至少一个样本有值，探测失败的负值也算），按线路表顺序。
+ * 这台节点能选的线路，按线路表顺序。
  *
- * 卡片线路切换菜单只列这些：后端对没配探测目标的槽位下发 `false`（→ null），那几条对这台节点
- * 永远是空的，换过去只会是一行「无样本」——「没数据就不展示」是站长定的口径。
- * 按样本数组缓存，同一份缓冲区返回同一个数组。
+ * - **ProbeDeck**（服务器对象带 `probes[]`）：扩展槽（`node_5..node_20`）只认 `probes[]`
+ *   —— 配了就列，哪怕探针还没上报；前 8 槽有值就收，`probes[]` 里列了也算。
+ *   规则与判定理由见 `resolveVisibleCarrierTasks`。
+ * - **老后端**（没有 `probes` 字段）：退回「缓冲区里至少一个样本有值」的旧口径，
+ *   行为与升级前完全一致。
+ *
+ * 卡片线路切换菜单只列这些：没配探测目标的槽位换过去只会是一行「无样本」——
+ * 「没数据就不展示」是站长定的口径。按样本数组 / 可见集合内容键缓存，同一份输入返回同一个数组。
  */
 export function listAvailablePingTaskIds(
   samples: readonly PingLiveSample[],
+  server?: CfsmServer | null,
 ): readonly number[] {
+  if (server) {
+    const visible = resolveVisibleCarrierTasks(server);
+    if (visible) {
+      const key = visible.map((task) => task.id).join(",");
+      const cached = serverTaskIdsCache.get(key);
+      if (cached) return cached;
+      const taskIds = visible.map((task) => task.id);
+      if (serverTaskIdsCache.size > 256) serverTaskIdsCache.clear();
+      serverTaskIdsCache.set(key, taskIds);
+      return taskIds;
+    }
+  }
   if (samples.length === 0) return EMPTY_TASK_IDS;
   const cached = availableTaskIdsCache.get(samples);
   if (cached) return cached;
@@ -412,7 +429,9 @@ export function listAvailablePingTaskIds(
 }
 
 export function useAvailablePingTaskIds(uuid: string, enabled = true): readonly number[] {
-  return listAvailablePingTaskIds(usePingSamples(uuid, enabled));
+  const samples = usePingSamples(uuid, enabled);
+  const server = useRawServer(uuid);
+  return listAvailablePingTaskIds(samples, enabled ? server : null);
 }
 
 /**

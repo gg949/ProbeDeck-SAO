@@ -362,6 +362,42 @@ describe("history conversion", () => {
     ]);
   });
 
+  it("falls back to the extra_probes JSON when the flat column is missing", () => {
+    // ProbeDeck 在历史行里把扩展槽（node_5..node_20）的数值同时塞进 extra_probes JSON；
+    // 扁平列被裁剪 / 缺席时用它兜底，键名就是扁平列名。
+    const records = historyRowsToPingRecords(
+      [
+        HistoryRowSchema.parse({
+          timestamp: NOW,
+          extra_probes: JSON.stringify({ ping_node_5: 44, loss_node_5: 0 }),
+        }),
+      ],
+      "node-a",
+    );
+
+    // task id 9 = 扩展槽 node_5。
+    expect(records.map((record) => [record.task_id, record.value, record.loss])).toEqual([
+      [9, 44, 0],
+    ]);
+  });
+
+  it("keeps the flat column when both sources carry a value", () => {
+    // 两边都有值时以扁平列为准（和面板的 mergeExtraPingLoss 同一口径）。
+    const records = historyRowsToPingRecords(
+      [
+        HistoryRowSchema.parse({
+          timestamp: NOW,
+          ping_node_5: 40,
+          loss_node_5: 0,
+          extra_probes: JSON.stringify({ ping_node_5: 44, loss_node_5: 0 }),
+        }),
+      ],
+      "node-a",
+    );
+
+    expect(records.map((record) => [record.task_id, record.value])).toEqual([[9, 40]]);
+  });
+
   it("names the eight carrier tasks", () => {
     expect(carrierPingTasks().map((task) => [task.id, task.name])).toEqual([
       [1, "电信"],
@@ -372,6 +408,8 @@ describe("history conversion", () => {
       [6, "Node 2"],
       [7, "Node 3"],
       [8, "Node 4"],
+      // ProbeDeck 把槽位扩到 24 个：node_5..node_20 是逐机扩展槽，默认名 Node N。
+      ...Array.from({ length: 16 }, (_, index) => [index + 9, `Node ${index + 5}`]),
     ]);
   });
 
@@ -410,6 +448,7 @@ describe("history conversion", () => {
       "东京",
       "Node 3",
       "Node 4",
+      ...Array.from({ length: 16 }, (_, index) => `Node ${index + 5}`),
     ]);
     expect(carrierTaskName(1, names)).toBe("CT");
     expect(carrierTaskName(3, names)).toBe("移动");
@@ -434,7 +473,9 @@ describe("resolveCarrierNames", () => {
   });
 
   it("falls back to a placeholder for ids outside the four fixed carriers", () => {
-    expect(carrierTaskName(9)).toBe("线路 #9");
+    // ProbeDeck 起 1..24 都是有效线路（9 号是扩展槽 node_5）；超出线路表才退回占位名。
+    expect(carrierTaskName(9)).toBe("Node 5");
+    expect(carrierTaskName(25)).toBe("线路 #25");
   });
 });
 

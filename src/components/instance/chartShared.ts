@@ -82,6 +82,10 @@ const TIME_RANGE_OPTIONS: TimeRangeOption[] = [
   { label: "1 天", value: 24 },
   { label: "2 天", value: 48 },
   { label: "7 天", value: 168 },
+  // ProbeDeck 把上限拉到 720 小时（30 天）。buildHistoryRangeOptions 会按 maxHours 过滤：
+  // 老后端（168）或访客（站点配置的 public_history_hours）不会看到这两档。
+  { label: "14 天", value: 336 },
+  { label: "30 天", value: 720 },
 ];
 
 const PING_TIME_RANGE_OPTIONS: TimeRangeOption[] = [...TIME_RANGE_OPTIONS];
